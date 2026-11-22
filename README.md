@@ -56,6 +56,8 @@ Ansem +10% -> Alice receives $117.25 in USDC ($120 less fees); and a stop that g
 real queue and settles at $0.237 a ticket. HyperCore isn't on a fork, so its three reads (account
 value, spot balance, lending reserve) are stood in for at their live values.
 
+**Open problems** (documented, not built): `docs/OPEN-PROBLEMS.md`: flash dumps and fast LP exits; flippers picking off Ember.
+
 **v0.5 still to do:** holder sales bigger than LiquidV's idle cash could also use the queue (today they
 wait); a keeper that pokes every block;
 a factory for the next Series after a Crown or stop; an LP share token; the gap holdback (spec §21, #11);

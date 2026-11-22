@@ -1,7 +1,14 @@
-# Open problem: flash dumps and fast LP exits
+# Open problems
 
-Status: **documented, not implemented.** Nothing in the contracts handles this yet beyond what's listed
-under "What already helps". Don't build a fix until the design below is agreed.
+Status: **documented, not implemented.** Nothing in the contracts handles these yet beyond what's listed
+under "What already helps". Don't build a fix until the design is agreed.
+
+1. [Flash dumps and fast LP exits](#1-flash-dumps-and-fast-lp-exits)
+2. [Flippers picking off Ember](#2-flippers-picking-off-ember)
+
+---
+
+# 1. Flash dumps and fast LP exits
 
 ---
 
@@ -89,9 +96,69 @@ These can be combined. Open questions for the decision:
 - How much can an LP be asked to leave behind before LPing stops being attractive?
 - Should listing rules be automatic (read from HyperCore) or manual at launch?
 
-## Why it needs live traders to prove
+## Why it needs live traders to prove (problem 1)
 
 The simulator runs on 11 days of LiquidV history across 19 tokens, which held no one-update
 liquidation. The right holdback size, notice length or reserve size depends on how often real traders
 gap, how big the gaps are, and how LPs actually behave. A small capped pilot (low limits per token)
 with real traders would answer that.
+
+---
+
+# 2. Flippers picking off Ember
+
+## The worry
+
+A buyer cashes out every small rise: the trader's token goes +5%, sell, buy again, sell at the next
++5%, and so on. Each time the pool pays the buyer's second gain. Does the pool just keep paying?
+
+## Why it mostly doesn't work (built)
+
+**The buyer has to buy before the move.** Orders fill at the next price update, so nobody can see the
++5% and then buy. Without real knowledge of what's coming, the token falls as often as it rises:
+
+| Trader's token | Flipper ($100 at 2x) | Ember |
+|---|---|---|
+| +5% | Sells at $110 (own +$5, pool +$5) | −$5 |
+| −5% | Ticket worth $90 | +$5 owed by the flipper |
+
+Holding the losers and waiting doesn't escape the loss: either the token comes back (nobody owes
+anything) or it keeps falling (the pool gains more, up to the stop). The holding fee (carry) charges
+every day they wait.
+
+**Every flip costs about 2%,** win or lose: LiquidV's 1% mint fee (real `$vTRADER` is bought each time),
+our 0.3% buy and 0.3% sell fee (60% of it to LPs), LiquidV's 0.3% exit fee and the hedge fees. A flipper
+with no edge loses those on every round trip, and the pool comes out ahead.
+
+**Hearth doesn't care.** It's hedged, so flips don't change its value, and it earns a fee on every one.
+
+## Where it is real
+
+Ember (the unhedged side) can lose to flippers in two cases:
+
+1. **The trader really is good.** The token keeps going up; buyers win and Ember pays. That's Ember's
+   chosen bet (against the trader), capped at its share of $1 per ticket at 2x, max $3.
+2. **Buyers find a real edge.** For example, a trader who always takes profit after a +5% run, so the
+   next move is predictable. Then flippers beat Ember on purpose.
+
+## Ideas for a fix (not built, to discuss)
+
+1. **A short-hold fee.** A slightly higher sell fee within a few minutes of buying (e.g. +0.5% if sold
+   within 10 minutes). Makes pure flipping expensive; normal holders never pay it. Goes to the LPs.
+2. **A holding fee that moves like perp funding.** The carry (already in the contract, switched off) is
+   set by how the pool is doing: higher when Ember is losing or most of its money is locked, lower when
+   it's idle. Ember gets paid more exactly when flippers are winning.
+   Example: base carry 4% a year; at 80% of Ember's money locked, 8% a year.
+3. **A cap on Ember per trader.** Ember can only back a set share of each trader's tickets (e.g. 30%),
+   so the bold LPs are never the main counterparty to a trader who keeps winning. Hearth takes the rest.
+
+Open questions:
+- Should the short-hold fee be a fixed window, or fall smoothly over the first hour?
+- What should move the funding-style carry: Ember's locked share, Ember's recent losses, or both?
+- Is a per-trader Ember cap set at launch, or adjusted from the trader's history?
+
+## Why it needs live traders to prove
+
+Whether flippers have an edge depends on how real traders' tokens move minute to minute (trends, profit
+taking, how fast LiquidV copies them). The fee sizes above are guesses until a capped pilot shows how
+buyers actually trade.
