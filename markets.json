@@ -1,0 +1,13 @@
+{
+  "_note": "Hyperliquid HIP-3 stock markets usable as the base. Asset id = 100000 + dexIndex*10000 + indexInDex (xyz = dex 1). From Hyperliquid's API on 2026-11-21; verify on testnet that the price precompiles take these ids.",
+  "xyz:SP500":  { "assetId": 110052, "szDecimals": 3, "maxBoost": "5x", "dayVolumeUsd": 150817363 },
+  "xyz:XYZ100": { "assetId": 110000, "szDecimals": 4, "maxBoost": "5x", "dayVolumeUsd": 299519514 },
+  "xyz:SMH":    { "assetId": 110089, "szDecimals": 3, "maxBoost": "3x" },
+  "xyz:NVDA":   { "assetId": 110002, "szDecimals": 3, "maxBoost": "2x", "dayVolumeUsd": 141084678 },
+  "xyz:TSLA":   { "assetId": 110001, "szDecimals": 3, "maxBoost": "2x", "dayVolumeUsd": 7878349 },
+  "xyz:AAPL":   { "assetId": 110009, "szDecimals": 3, "maxBoost": "2x", "dayVolumeUsd": 17396536 },
+  "xyz:MSFT":   { "assetId": 110010, "szDecimals": 3, "maxBoost": "2x", "dayVolumeUsd": 9386723 },
+  "xyz:GOOGL":  { "assetId": 110012, "szDecimals": 3, "maxBoost": "2x", "dayVolumeUsd": 35276808 },
+  "xyz:AMZN":   { "assetId": 110013, "szDecimals": 3, "maxBoost": "2x", "dayVolumeUsd": 11776704 },
+  "xyz:META":   { "assetId": 110008, "szDecimals": 3, "maxBoost": "2x", "dayVolumeUsd": 16487146 }
+}
