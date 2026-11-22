@@ -1,4 +1,39 @@
-# Asphodel contracts: stocks on Hyperliquid
+# Asphodel contracts
+
+Two isolated builds of Asphodel's boosted token, side by side. They share only the price-feed interface;
+neither depends on the other.
+
+| Build | Folder | Base (the real token) | Spec |
+|---|---|---|---|
+| **v0.5 LiquidV (the original)** | `contracts/liquidv/` | A LiquidV trader token (`$vTRADER`) | `ASPHODEL-SPEC-v0.5.md` |
+| Stocks on Hyperliquid | `contracts/` (top level) | A Hyperliquid stock market (`xyz:SP500`, ...) | `ASPHODEL-STOCKS-v0.1.md` |
+
+## v0.5 LiquidV build
+
+Example: $100 of `$vWHALE` 2x buys 100 tickets at $1.00, and the $100 really buys `$vWHALE` from LiquidV.
+0xWhale's token rises 10%: the ticket is $1.20 and Alice sells for $120 (her own +$10, plus +$10 from the
+Meadow). If it falls 37.5% for 2 updates, she's stopped out with $25.
+
+**How LiquidV works on-chain** (read from a live vault on HyperEVM, 2026-11-22): each trader's vault is an
+ERC-4626 contract whose **share is the trader token** (vault `0x7952…f8` for trader `0x0149…bdb` has the
+symbol `v014980`). You buy by depositing USDC (1% fee) and sell by redeeming (0.3% exit fee).
+`totalAssets()` = idle USDC + the vault's HyperCore account, and that account part matched Hyperliquid's live
+account value to the cent, so the NAV is read live on-chain. Instant redeems only go up to the vault's idle
+cash ($14.59 of $91 that day); bigger exits join LiquidV's redemption queue.
+
+| File | What it does |
+|---|---|
+| `contracts/liquidv/AsphodelLiquidVMarket.sol` | One Series of one boosted trader token, per spec v0.5: price `1 + B(x-1)` from a $1 start with one zero at launch, LPs' part capped at MAXB; orders fill at the **next** update at the vault's live NAV; stop $0.25 on 2 updates, holder keeps what's left at the real redemption price; Crown on 2 updates, Meadow pays exactly MAXB and holder keeps the real token's value; per-pool coverage after the hedge is paid for (Ember: its share of MAXB in cash; Hearth: its share of MAXB in cash **and** its hedge); hedge fee; LiquidV fees only on the holder's own share; sellers get the real redemption; fixed Hearth/Ember split; LP withdrawals from free capital only; mint limit; gap guard; carry. When LiquidV lacks idle cash, sales wait and a stop/Crown stays ENDING until the base is redeemed, then settles on what it really redeemed for |
+| `contracts/liquidv/LiquidVNavFeed.sol` | NAV per `$vTRADER` share from the vault itself (`convertToAssets`), refused while the vault is stale, paused or not activated |
+| `contracts/liquidv/ILiquidVVault.sol` | LiquidV's vault interface, from the deployed implementation's function selectors |
+| `contracts/mocks/MockLiquidVVault.sol` | Test vault: settable NAV, 1% / 0.3% fees, idle cash, capacity, stale/paused |
+
+**v0.5 still to do:** confirm the vault interface with LiquidV (the meaning of the 4th argument of
+`deposit`/`redeem`, and `requestRedeem` for exits bigger than idle cash); a keeper that pokes every block;
+a factory for the next Series after a Crown or stop; an LP share token; the gap holdback (spec §21, #11);
+a dormancy rule for quiet traders; an audit.
+
+## Stocks build
 
 Asphodel's boosted token on Hyperliquid's own stock markets (HIP-3 perps such as `xyz:SP500`,
 `xyz:XYZ100`, `xyz:NVDA`). A buyer's money buys the real asset (the base); the Meadow
@@ -46,7 +81,13 @@ npm install
 npx hardhat test solidity
 ```
 
-22 tests: the spec's worked example (up and down), fill at the next update, stale feed, cancel only
+40 tests. v0.5 LiquidV (18): the worked example up and down, LiquidV fees and the hedge fee, fill at
+the next update at live NAV, stale vault, Crown, stop, one dip doesn't stop, a stop that waits for
+LiquidV's idle cash and settles on the real redemption, a sale that waits for idle cash, Hearth needing
+coverage and hedge, Ember coverage per pool, LiquidV full, LP withdrawals, mint limit, gap guard, and a
+120-step random walk with fees and thin idle cash checking solvency every step.
+
+Stocks (22): the spec's worked example (up and down), fill at the next update, stale feed, cancel only
 after `maxOrderAge`, Crown on 2 updates, one spike doesn't Crown, stop on 2 updates, a gap through
 the stop, one dip doesn't stop, weekend (no mints, no stop; stop fires on Monday), weekend sale on the
 hour average, coverage refusal, Hearth's hedge as collateral, LP withdrawals limited to free money,
