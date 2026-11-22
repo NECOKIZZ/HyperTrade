@@ -14,12 +14,29 @@ Example: $100 of `$vWHALE` 2x buys 100 tickets at $1.00, and the $100 really buy
 0xWhale's token rises 10%: the ticket is $1.20 and Alice sells for $120 (her own +$10, plus +$10 from the
 Meadow). If it falls 37.5% for 2 updates, she's stopped out with $25.
 
-**How LiquidV works on-chain** (read from a live vault on HyperEVM, 2026-11-22): each trader's vault is an
-ERC-4626 contract whose **share is the trader token** (vault `0x7952…f8` for trader `0x0149…bdb` has the
-symbol `v014980`). You buy by depositing USDC (1% fee) and sell by redeeming (0.3% exit fee).
-`totalAssets()` = idle USDC + the vault's HyperCore account, and that account part matched Hyperliquid's live
-account value to the cent, so the NAV is read live on-chain. Instant redeems only go up to the vault's idle
-cash ($14.59 of $91 that day); bigger exits join LiquidV's redemption queue.
+**How LiquidV works on-chain.** Checked against the real deployed vault code on a fork of HyperEVM
+(`test/fork/`), with vANSEM's vault, 2026-11-22:
+
+- A trader's vault is an ERC-4626 contract whose **share is the trader token** (`$vANSEM` is vault
+  `0xC7F1…Ce91`, symbol `vb2b7e6` after Ansem's wallet `0xb2b7e6…`).
+- **Buy** = `deposit(usdc, receiver, minShares)`: 1% fee ($10 in -> shares worth $9.90).
+- **Sell** = `redeem(shares, receiver, owner, minAssets)`: 0.3% fee, instant, but **only up to the idle
+  cash** the vault keeps on HyperEVM. vANSEM held $187.25: $160.14 working on its Hyperliquid trading
+  account and $27.10 idle. Selling more than the idle cash reverts.
+- **Bigger exits** = `requestRedeem(...)`: the shares wait in a queue. Anyone can call
+  `processRedemptions(n)`; it pays waiting requests in order once LiquidV's keeper has brought cash back
+  from Hyperliquid, straight to the receiver, **at the price when processed** (a $490 quote paid $444.81
+  after a 10% fall). vANSEM's queue had been used 4 times, all paid.
+- **The value is live**: `totalAssets()` = idle cash + the trading account read through HyperCore's
+  precompiles; it matched Hyperliquid's live account value to the cent.
+- **Stale** (anyone can flag it after the keeper misses its 1-hour heartbeat) and **paused** (LiquidV's
+  guardian) **only block deposits**: redeems still work and the value is still live.
+- **Capacity**: deposits are capped at $5,000 per vault and at the trader's own account size.
+
+What the market does with that: new tickets are refused while LiquidV is stale or paused, but sales,
+stops and Crowns go on. A stop or Crown redeems what it can instantly, then puts the rest (with Hearth's
+hedge) in LiquidV's queue and processes the queue on each update until it's paid, then settles on what
+the base really redeemed for. A holder's sale bigger than LiquidV's idle cash waits until there is cash.
 
 | File | What it does |
 |---|---|
@@ -28,8 +45,19 @@ cash ($14.59 of $91 that day); bigger exits join LiquidV's redemption queue.
 | `contracts/liquidv/ILiquidVVault.sol` | LiquidV's vault interface, from the deployed implementation's function selectors |
 | `contracts/mocks/MockLiquidVVault.sol` | Test vault: settable NAV, 1% / 0.3% fees, idle cash, capacity, stale/paused |
 
-**v0.5 still to do:** confirm the vault interface with LiquidV (the meaning of the 4th argument of
-`deposit`/`redeem`, and `requestRedeem` for exits bigger than idle cash); a keeper that pokes every block;
+**Fork tests** (real LiquidV code; off unless switched on):
+
+```bash
+LIQUIDV_FORK=true LIQUIDV_CORE_USD6=<vANSEM coreAssets() now> npx hardhat test solidity test/fork
+```
+
+They check every point above, then run this market against the real vault: $100 -> 98.23 tickets ->
+Ansem +10% -> Alice receives $117.25 in USDC ($120 less fees); and a stop that goes through LiquidV's
+real queue and settles at $0.237 a ticket. HyperCore isn't on a fork, so its three reads (account
+value, spot balance, lending reserve) are stood in for at their live values.
+
+**v0.5 still to do:** holder sales bigger than LiquidV's idle cash could also use the queue (today they
+wait); a keeper that pokes every block;
 a factory for the next Series after a Crown or stop; an LP share token; the gap holdback (spec §21, #11);
 a dormancy rule for quiet traders; an audit.
 

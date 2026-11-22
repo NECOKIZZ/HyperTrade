@@ -4,14 +4,23 @@ pragma solidity ^0.8.28;
 /// @notice A LiquidV trader vault on HyperEVM. Its share token IS the trader token (`$vTRADER`):
 /// an ERC-20 (18 decimals) minted by depositing USDC at NAV (1% fee) and redeemed at NAV (0.3% exit fee).
 ///
-/// Read from the live vault for trader 0x0149…abdb (vault 0x7952e97de05cb8be5657f4a0096f360e6cb39af8,
-/// beacon implementation 0xac21136171932299828130c699e88e7159be8849) on 2026-11-22:
-///   asset() = USDC 0xb88339CB7199b77E23DB6E890353E22632Ba630f; totalAssets() = availableIdle() + coreAssets(),
-///   and coreAssets() equalled the vault's live HyperCore account value to the cent, so NAV is read live.
-///   previewDeposit / convertToShares = 0.990 (1% mint fee); previewRedeem / convertToAssets = 0.997 (0.3% exit fee).
-///   Instant redeems only go up to availableIdle(); bigger exits use requestRedeem (a queue).
-/// Function names come from the implementation's selectors; argument meanings of the 4-argument
-/// deposit/redeem (a minimum out) are inferred and must be confirmed with LiquidV.
+/// Checked against the deployed code (beacon implementation 0xac21136171932299828130c699e88e7159be8849)
+/// on a fork of HyperEVM, 2026-11-22, with vANSEM's vault 0xC7F1330ffa5644ED14FBD0ff0efa793669bCCe91
+/// (test/fork/LiquidVVault.fork.t.sol):
+///   - totalAssets() = availableIdle() (USDC on HyperEVM) + coreAssets() (its HyperCore account, read
+///     live through the precompiles; matched Hyperliquid's live account value to the cent).
+///   - deposit(assets, receiver, minShares): 3rd argument is a minimum of shares (preview + 1 reverts).
+///     $10 in -> shares worth $9.90 (1% fee).
+///   - redeem(shares, receiver, owner, minAssets): 4th argument is a minimum of assets. Instant, and
+///     only up to availableIdle(); more reverts.
+///   - requestRedeem(shares, receiver, owner, minAssets) -> (id, quotedAssets): the shares move into the
+///     vault and wait in a queue. processRedemptions(n) can be called by anyone; it pays requests in
+///     order once the vault has the cash on HyperEVM, straight to the receiver, at the price when
+///     processed (a $490 quote paid $444.81 after a 10% fall: no price protection). queueHead() moves
+///     past a request's id once it is paid.
+///   - stale(): set by anyone (markStale) once the keeper misses its heartbeat for staleAfter (1 hour).
+///     paused(): set by the guardian. Both block deposits only: redeems still work and NAV is still live.
+///   - Deposits are capped by maxDeposit(): maxTotalAssets ($5,000) and the trader's own account size.
 interface ILiquidVVault {
     // ERC-20 (the trader token)
     function balanceOf(address who) external view returns (uint256);
@@ -32,6 +41,16 @@ interface ILiquidVVault {
 
     /// instant redeem with a minimum of assets out (selector 0x9f40a7b3); reverts InsufficientIdle
     function redeem(uint256 shares, address receiver, address owner, uint256 minAssets) external returns (uint256 assets);
+
+    /// queued redeem for more than idle cash (selector 0x8181e161); returns the request id and a quote
+    function requestRedeem(uint256 shares, address receiver, address owner, uint256 minAssets)
+        external
+        returns (uint256 id, uint256 assets);
+
+    /// pay up to n queued requests that the vault has cash for (anyone can call; selector 0xb4dc8294)
+    function processRedemptions(uint256 n) external returns (uint256 processed);
+
+    function queueHead() external view returns (uint256);
 
     // LiquidV extras
     function availableIdle() external view returns (uint256);

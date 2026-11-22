@@ -126,7 +126,7 @@ contract AsphodelLiquidVMarketTest is Test {
         assertTrue(ok);
         vault.setStale(true);
         (, ok) = feed.read();
-        assertFalse(ok, "stale vault: no price");
+        assertTrue(ok, "stale only blocks LiquidV deposits; the NAV is still live");
     }
 
     // ---------------------------------------------------------------- the spec's worked example
@@ -170,15 +170,58 @@ contract AsphodelLiquidVMarketTest is Test {
         assertApproxEqAbs(m.balanceOf(alice), uint256(100e18) * 1e18 / 1.2e18, 1e12, "filled at $1.20");
     }
 
-    function test_stale_vault_fills_nothing() public {
+    function test_stale_liquidv_no_new_tickets_but_sales_work() public {
+        buy(alice, 50e6);
+        vault.setStale(true); // LiquidV's keeper missed its heartbeat: deposits closed, redeems open
         vm.prank(alice);
         m.requestBuy(100e6, 0);
-        vault.setStale(true);
+        update();
+        assertApproxEqAbs(m.claimable(alice), 100e18, 1e13, "buy refunded");
+        assertApproxEqAbs(sellAll(alice), 50e18, 1e13, "but Alice can still sell");
+        assertSolvent();
+    }
+
+    function test_no_price_nothing_fills() public {
+        vm.prank(alice);
+        m.requestBuy(100e6, 0);
+        vault.setPps(0); // no NAV at all
         update();
         assertEq(m.balanceOf(alice), 0);
-        vault.setStale(false);
+        vault.setPps(PPS0);
         update();
         assertGt(m.balanceOf(alice), 0);
+    }
+
+    function test_stop_goes_through_liquidv_queue() public {
+        buy(alice, 100e6);
+        vault.setIdle(5e6); // LiquidV holds only $5 on HyperEVM
+        updateAt(0.625e18);
+        update(); // stop confirmed: $5 redeemed now, the rest (with Hearth's hedge) queued at LiquidV
+        assertEq(uint256(m.status()), uint256(AsphodelLiquidVMarket.Status.ENDING));
+        assertTrue(m.queued(), "queued at LiquidV");
+        vault.setPps(PPS0 * 6 / 10); // the trader keeps falling while the cash comes back
+        vault.setIdle(type(uint256).max); // LiquidV's keeper brings the cash back to HyperEVM
+        update(); // our update processes LiquidV's queue and settles
+        assertEq(uint256(m.status()), uint256(AsphodelLiquidVMarket.Status.KNOCKED_OUT));
+        // base: ~$5 at x 0.625 + the rest at x 0.6: just under $60.4 -> about $0.21 a ticket left
+        assertGt(m.claimPerTicket(), 0.20e18);
+        assertLt(m.claimPerTicket(), 0.25e18);
+        assertEq(m.hedgeUnits(), 0, "Hearth's hedge redeemed too");
+        assertSolvent();
+    }
+
+    function test_crown_goes_through_liquidv_queue() public {
+        buy(alice, 100e6);
+        vault.setIdle(0);
+        updateAt(2.2e18);
+        update();
+        assertTrue(m.queued());
+        vault.setIdle(type(uint256).max);
+        update();
+        assertEq(uint256(m.status()), uint256(AsphodelLiquidVMarket.Status.CROWNED));
+        assertApproxEqAbs(m.claimPerTicket(), 3.2e18, 1e11);
+        assertApproxEqAbs(m.cashH(), 1010e18, 1e13, "hedge paid to Hearth");
+        assertSolvent();
     }
 
     // ---------------------------------------------------------------- Crown and stop

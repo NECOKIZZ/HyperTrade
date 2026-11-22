@@ -11,6 +11,25 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IPriceFeed} from "../interfaces/IPriceFeed.sol";
 import {ILiquidVVault} from "./ILiquidVVault.sol";
 
+/// @notice Receives LiquidV's queued redemption payments for one market, so they can be told apart.
+contract RedemptionReceiver {
+    using SafeERC20 for IERC20;
+
+    address public immutable market;
+    IERC20 public immutable usdc;
+
+    constructor(IERC20 usdc_) {
+        market = msg.sender;
+        usdc = usdc_;
+    }
+
+    function sweep() external returns (uint256 amount) {
+        require(msg.sender == market, "only market");
+        amount = usdc.balanceOf(address(this));
+        usdc.safeTransfer(market, amount);
+    }
+}
+
 /// @title Asphodel v0.5: a boosted LiquidV trader token (one Series).
 /// @notice Spec: ASPHODEL-SPEC-v0.5.md. A buyer's money buys the real LiquidV trader token
 /// (`$vTRADER`, the vault's share). The Meadow (Hearth + Ember) backs the boost: an extra (B - 1) x the
@@ -24,8 +43,11 @@ import {ILiquidVVault} from "./ILiquidVVault.sol";
 ///   the real redemption price, the Meadow the rest.
 /// Crown: x >= xc on 2 updates in a row -> the Meadow pays exactly MAXB; holders get the base's real
 ///   redemption proceeds + MAXB.
-/// LiquidV only redeems instantly up to its idle cash, so a stop or Crown may take several updates
-///   to sell the base (status ENDING); it settles on what the base actually redeemed for.
+/// LiquidV only redeems instantly up to its idle cash. A stop or Crown first redeems what it can
+///   instantly, then puts the rest (with Hearth's hedge) in LiquidV's redemption queue and processes the
+///   queue on every update (status ENDING); it settles on what the base actually redeemed for.
+/// When LiquidV is stale or paused, new tickets are refused; sales, stops and Crowns go on (LiquidV still
+///   redeems then, and the NAV is still live).
 /// Coverage per pool, after the hedge is paid for: Ember holds (1 - h) x supply x MAXB in cash; Hearth
 ///   holds h x supply x MAXB in cash AND its hedge (h x (B - 1) units of base per ticket).
 /// Orders fill at the next update after the block they were placed in, at the vault's live NAV.
@@ -83,6 +105,7 @@ contract AsphodelLiquidVMarket is ERC20, Ownable, ReentrancyGuard {
     IERC20 public immutable usdc;
     ILiquidVVault public immutable vault;
     IPriceFeed public immutable feed;
+    RedemptionReceiver public immutable receiver;
     uint256 public immutable nav0;
     uint256 public immutable launchTime;
     uint256 public immutable xCrown;
@@ -99,6 +122,10 @@ contract AsphodelLiquidVMarket is ERC20, Ownable, ReentrancyGuard {
     uint256 public cashE;
     uint256 public protocolFees;
     uint256 public endProceeds; //  base redeemed so far while ENDING, USD WAD
+    bool public queued; //          a LiquidV redemption request is waiting
+    uint256 public queueId;
+    uint256 public queuedBase; //   shares of base in that request
+    uint256 public queuedHedge; //  shares of Hearth's hedge in that request
     uint256 public endReserve;
     uint256 public claimPerTicket;
     uint256 public escrowUsd;
@@ -158,6 +185,7 @@ contract AsphodelLiquidVMarket is ERC20, Ownable, ReentrancyGuard {
         xCrown = WAD + Math.mulDiv(cfg_.C - WAD, WAD, cfg_.B);
         maxBoost = _mul(cfg_.B - WAD, xCrown - WAD);
         usdc.forceApprove(address(vault_), type(uint256).max);
+        receiver = new RedemptionReceiver(usdc);
     }
 
     // ================================================================ views
@@ -350,8 +378,9 @@ contract AsphodelLiquidVMarket is ERC20, Ownable, ReentrancyGuard {
         emit Ending(crown, x());
     }
 
-    /// Redeem as much of the base as LiquidV's idle cash allows; settle once it's all sold.
+    /// Redeem what LiquidV can pay now; queue the rest (with Hearth's hedge, so both get one price).
     function _progressEnding() internal {
+        if (queued) return _pollQueue();
         if (baseUnits > 0) {
             uint256 units = _redeemableUnits(baseUnits);
             if (units > 0) {
@@ -359,7 +388,35 @@ contract AsphodelLiquidVMarket is ERC20, Ownable, ReentrancyGuard {
                 endProceeds += _redeemUnits(units);
             }
         }
-        if (baseUnits == 0) _finish();
+        if (baseUnits == 0) return _finish();
+        uint256 b = baseUnits;
+        uint256 hg = hedgeUnits;
+        (bool ok, bytes memory ret) = address(vault).call(
+            abi.encodeCall(ILiquidVVault.requestRedeem, (b + hg, address(receiver), address(this), 0))
+        );
+        if (!ok || ret.length < 64) return; // try again next update
+        (queueId,) = abi.decode(ret, (uint256, uint256));
+        queued = true;
+        queuedBase = b;
+        queuedHedge = hg;
+        baseUnits = 0;
+        hedgeUnits = 0;
+        _pollQueue();
+    }
+
+    function _pollQueue() internal {
+        // anyone may process LiquidV's queue; do it on every update while we wait
+        (bool ok,) = address(vault).call(abi.encodeCall(ILiquidVVault.processRedemptions, (uint256(cfg.maxBatch))));
+        ok;
+        if (vault.queueHead() <= queueId) return;
+        uint256 paid = receiver.sweep() * USDC_TO_WAD;
+        uint256 baseShare = Math.mulDiv(paid, queuedBase, queuedBase + queuedHedge);
+        endProceeds += baseShare;
+        cashH += paid - baseShare; // the hedge is Hearth's
+        queued = false;
+        queuedBase = 0;
+        queuedHedge = 0;
+        _finish();
     }
 
     function _finish() internal {
@@ -446,6 +503,7 @@ contract AsphodelLiquidVMarket is ERC20, Ownable, ReentrancyGuard {
         c.xx = x();
         c.pr = priceAt(c.xx);
         if (c.pr <= cfg.stopPrice) return _refund(id, o, "at stop");
+        if (vault.stale() || vault.paused()) return _refund(id, o, "LiquidV closed");
         if (Math.mulDiv(_mul(cfg.B, c.xx), WAD, c.pr) > cfg.mintBoostLimit) return _refund(id, o, "mint limit");
         if (cfg.gapGuardK > 0 && c.pr - cfg.stopPrice < _mul(_mul(_mul(cfg.gapGuardK, cfg.B), c.xx), biggestMove())) {
             return _refund(id, o, "gap guard");

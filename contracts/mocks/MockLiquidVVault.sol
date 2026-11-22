@@ -25,6 +25,15 @@ contract MockLiquidVVault is ERC20 {
 
     error InsufficientIdle(uint256 need, uint256 idle);
 
+    struct Request {
+        address owner;
+        address receiver;
+        uint256 shares;
+    }
+
+    Request[] public requests;
+    uint256 public queueHead;
+
     constructor(IERC20 usdc_, uint256 pps_, uint256 mintFeeWad_, uint256 exitFeeBps_) ERC20("LiquidV v014980", "v014980") {
         usdcToken = usdc_;
         pps = pps_;
@@ -63,6 +72,32 @@ contract MockLiquidVVault is ERC20 {
         require(shares >= minShares, "vault: min shares");
         usdcToken.safeTransferFrom(msg.sender, address(this), assets);
         _mint(receiver, shares);
+    }
+
+    /// Like the real vault: shares wait inside the vault; paid in order, at the price when processed,
+    /// straight to the receiver, once idle cash covers them. minAssets is not enforced at processing.
+    function requestRedeem(uint256 shares, address receiver, address owner, uint256)
+        external
+        returns (uint256 id, uint256 assets)
+    {
+        require(owner == msg.sender, "vault: owner");
+        _transfer(owner, address(this), shares);
+        id = requests.length;
+        requests.push(Request(owner, receiver, shares));
+        assets = previewRedeem(shares);
+    }
+
+    function processRedemptions(uint256 n) external returns (uint256 processed) {
+        while (processed < n && queueHead < requests.length) {
+            Request memory r = requests[queueHead];
+            uint256 assets = previewRedeem(r.shares);
+            if (assets > idle) break;
+            if (idle != type(uint256).max) idle -= assets;
+            _burn(address(this), r.shares);
+            usdcToken.safeTransfer(r.receiver, assets);
+            queueHead++;
+            processed++;
+        }
     }
 
     function redeem(uint256 shares, address receiver, address owner, uint256 minAssets) external returns (uint256 assets) {
