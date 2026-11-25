@@ -1,4 +1,57 @@
-# Asphodel contracts
+# Asphodel
+
+Boosted tokens on Hyperliquid traders. A buyer's money buys the real LiquidV trader token (`$vANSEM`,
+...); the Meadow (Hearth + Ember LP pools) pays the extra boost. Launching on **Elysium**: testnet now,
+mainnet the day Elysium's HyperCore read precompile goes live (`docs/ELYSIUM.md`).
+
+## What's here
+
+| Part | Where | What it does |
+|---|---|---|
+| Market | `contracts/liquidv/` | One Series of one boosted trader token (spec v0.5, details below) |
+| Elysium | `contracts/elysium/` | `MirrorVault` (testnet stand-in that follows a real LiquidV vault), `HyperCoreNavFeed` + `IHyperCoreReader` (the precompile slot), `HyperEvmCoreReader` (the same read on HyperEVM, works today) |
+| App | `app/` | Trade (buy/sell tickets), Pool (Hearth/Ember), Trader (live positions trader vs vault, tracking chart) |
+| Keeper | `scripts/keeper.ts` | Relays the real vault from HyperEVM to testnet, calls `poke()` on every Series |
+| Watcher | `scripts/watcher.ts` | Compares each LiquidV token with its trader's real Hyperliquid account using LiquidV's mirror rule; serves the Trader page |
+| Deploy | `scripts/deploy.ts` | One Series per trader in `scripts/lib/chains.ts`; writes `deployments/<network>.json` |
+
+The stocks build (`contracts/AsphodelMarket.sol`, `contracts/hypercore/`, `MarketCalendar`) stays in the
+repo but isn't part of the app or the Elysium launch.
+
+## Run it
+
+Needs Node 22.18+ (runs the TypeScript scripts directly).
+
+```bash
+npm install && npm --prefix app install
+npm test                                            # 50 Solidity tests
+NETWORK=elysiumTestnet DEPLOYER_KEY=0x... npm run deploy   # needs testnet HYPE for gas
+NETWORK=elysiumTestnet KEEPER_KEY=0x... npm run keeper
+npm run watcher                                     # http://localhost:8787/api/tracking
+VITE_WATCHER_URL=http://localhost:8787 npm run app  # http://localhost:5173
+```
+
+Local end to end: `npx hardhat node`, then the same commands with `NETWORK=local` and Hardhat's first
+account key. Behind a proxy, run the scripts with `NODE_USE_ENV_PROXY=1` (Node's fetch ignores
+`HTTPS_PROXY` otherwise).
+
+## What the watcher measures
+
+Every 10 s, for each trader: their positions and account value on every dex the vault trades, the
+vault's own Hyperliquid positions (same address), the vault's NAV per share on HyperEVM, and mark prices.
+
+- **Ratio**: the vault's size / the trader's (LiquidV mirrors at a fixed 1 : N). vANSEM: 1 : 848.
+- **Expected NAV**: what a token would be worth if the vault had held exactly ratio x the trader's
+  positions since the first sample. **Gap** = actual / expected - 1, in basis points: LiquidV's fees,
+  funding and copying a few seconds late show up here.
+- **Exposure**: positions / account value, for the trader and for the token (counting the vault's idle
+  cash). On 2026-11-25 Ansem ran at 7.5x and vANSEM at 4.0x.
+
+Points are kept in `data/tracking/<vault>.jsonl`.
+
+---
+
+# Contracts
 
 Two isolated builds of Asphodel's boosted token, side by side. They share only the price-feed interface;
 neither depends on the other.

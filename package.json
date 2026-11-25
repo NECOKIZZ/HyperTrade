@@ -1,11 +1,16 @@
 {
-  "name": "asphodel-contracts",
+  "name": "asphodel",
   "version": "1.0.0",
-  "description": "",
+  "description": "Asphodel: boosted LiquidV trader tokens on Elysium",
   "main": "index.js",
   "scripts": {
     "test": "hardhat test solidity",
-    "build": "hardhat build"
+    "build": "hardhat build",
+    "deploy": "hardhat build && node scripts/deploy.ts",
+    "keeper": "node scripts/keeper.ts",
+    "watcher": "node scripts/watcher.ts",
+    "app": "npm --prefix app run dev",
+    "app:build": "npm --prefix app run build"
   },
   "keywords": [],
   "author": "",
@@ -13,6 +18,7 @@
   "type": "module",
   "devDependencies": {
     "@openzeppelin/contracts": "^5.6.1",
-    "hardhat": "^3.22.0"
+    "hardhat": "^3.22.0",
+    "viem": "^2.21.54"
   }
 }
