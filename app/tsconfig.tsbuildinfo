@@ -1,1 +1,0 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/components/LineChart.tsx","./src/lib/config.ts","./src/lib/format.ts","./src/lib/hooks.ts","./src/pages/Pool.tsx","./src/pages/Trade.tsx","./src/pages/Trader.tsx"],"version":"5.6.3"}
