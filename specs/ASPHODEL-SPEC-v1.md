@@ -1,6 +1,6 @@
 # Asphodel v1 (draft): baskets first
 
-**Status:** draft spec, nothing built yet · **Date:** 2026-11-26
+**Status:** draft spec · step 1 (baskets) built and tested, see `README.md` · **Date:** 2026-11-26
 **Replaces as the plan:** v0.5 (LiquidV trader tokens). v0.5 and the stocks section v0.1 stay in this folder as history; their code stays in the repo, parked.
 
 > "ETF" and "basket" here mean an on-chain basket of tokenized stocks, not a regulated fund. Capital is at risk.
@@ -165,7 +165,10 @@ There's no $100 crowdfunding phase (it was in the Gemini draft). One creator and
 ### 3.5 Dividends and splits
 
 - **Ondo** tokens pass dividends through their growing share ratio, so the basket's value includes them automatically.
-- **bStocks:** how dividends reach holders is **not yet known** (§9). Until it is, the League scores by the token's own price (what holders actually have), so everyone is treated the same.
+- **bStocks:**
+  - Raw balances never change. Dividends and splits go through a `uiMultiplier` on the token, scheduled ahead with `effectiveAt`.
+  - Read on 26 Nov 2026: NVDA 1.000778, AVGO 1.001269, MSFT 1.002667, and TSLA exactly 1.0. Tesla pays no dividend, which points to the multiplier carrying reinvested dividends.
+  - So a raw token's value = share price × multiplier. The basket counts raw tokens, and its value includes dividends automatically. Every price we read must be per raw token.
 - **Splits:** the basket only counts token quantities and token prices, never a raw share price.
   - Any single token moving over 30% in one update pauses that basket's Rebalancer and leverage until checked against a second price.
   - The League marks it for review.
@@ -439,8 +442,16 @@ Steady protects in crashes and costs Alice on dip-and-recover. Offer both, and l
 ## 9. Must check before building (open questions)
 
 1. **An on-chain price for bStocks and Ondo tokens on BNB Chain:** Chainlink, the issuer's own oracle, or a DEX average? This blocks the Rebalancer, League v2 and leverage, but not Rider baskets or League v1.
-2. **bStock dividends:** how they reach holders (price drop, airdrop, ratio?). This decides whether a basket's value includes them.
-3. **Issuer controls:** can bStocks and Ondo pause or blocklist a contract like `BasketVault`? What happens to tokens inside?
+2. **bStock dividends:** ✅ mostly answered (§3.5): through `uiMultiplier`, with raw balances fixed. Still to confirm with the issuer: that the multiplier is the *reinvested* dividend, and how splits are scheduled.
+3. **Issuer controls:** ✅ answered for bStocks by reading the deployed contracts and testing on a fork.
+   - **Upgradeable:** bStocks are beacon proxies, so the issuer can change their code.
+   - **Pausing:** a `PauseManager` can pause one token or all of them.
+   - **Blocking:** a `Compliance` contract keeps a sanctions list and a per-token blocklist, and it **can block the basket contract itself**.
+   - **What our vault does** (tested on real bStocks):
+     - A paused token, or a token whose holder is blocked, is set aside at redemption and claimed later.
+     - If the vault itself is blocked, only that one stock is frozen inside; the others still redeem.
+     - Mints wait until the token can move again.
+   - **Ondo:** not checked yet.
 4. **Swap depth at size:** price impact for $1k–$100k zaps and rebalances (measured so far only at $5–10).
 5. **Who may hold them:** stock tokens are restricted for some users (e.g. US persons). Does that pass through to basket shares?
 6. **Legal:**
